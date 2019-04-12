@@ -809,6 +809,9 @@ impl SpircTask {
         self.state.set_context_uri(context_uri);
         self.state.set_repeat(frame.get_state().get_repeat());
         self.state.set_shuffle(frame.get_state().get_shuffle());
+
+        let tracks_as_spotifyid = self.state.get_track().iter().map(|x| SpotifyId::from_raw(x.get_gid()).unwrap()).collect::<Vec<_>>();
+        self.player.update(tracks_as_spotifyid);
     }
 
     fn load_track(&mut self, play: bool) {
