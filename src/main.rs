@@ -12,6 +12,8 @@ extern crate tokio_signal;
 extern crate url;
 extern crate sha1;
 extern crate hex;
+extern crate hyper;
+extern crate librespot_service;
 
 use sha1::{Sha1, Digest};
 use env_logger::LogBuilder;
@@ -42,6 +44,7 @@ use librespot::playback::player::{Player, PlayerEvent};
 
 mod player_event_handler;
 use player_event_handler::run_program_on_events;
+use librespot_service::service::Service;
 
 fn device_id(name: &str) -> String {
     hex::encode(Sha1::digest(name.as_bytes()))
@@ -374,6 +377,8 @@ struct Main {
     spirc_task: Option<SpircTask>,
     connect: Box<Future<Item = Session, Error = io::Error>>,
 
+    service_task: Option<Service>,
+
     shutdown: bool,
 
     player_event_channel: Option<UnboundedReceiver<PlayerEvent>>,
@@ -399,6 +404,8 @@ impl Main {
             spirc_task: None,
             shutdown: false,
             signal: Box::new(tokio_signal::ctrl_c(&handle).flatten_stream()),
+
+            service_task: None,
 
             player_event_channel: None,
             player_event_program: setup.player_event_program,
@@ -464,6 +471,9 @@ impl Future for Main {
                     Player::new(player_config, session.clone(), audio_filter, move || {
                         (backend)(device)
                     });
+
+                let service_task = Service::new(session.clone());
+                self.service_task = Some(service_task);
 
                 let (spirc, spirc_task) = Spirc::new(connect_config, session, player, mixer);
                 self.spirc = Some(spirc);

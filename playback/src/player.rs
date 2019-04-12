@@ -17,7 +17,7 @@ use core::spotify_id::SpotifyId;
 use audio::{AudioDecrypt, AudioFile};
 use audio::{VorbisDecoder, VorbisPacket};
 use audio_backend::Sink;
-use metadata::{FileFormat, Metadata, Track};
+use metadata::{FileFormat, Metadata, Track, Artist};
 use mixer::AudioFilter;
 
 pub struct Player {
@@ -43,6 +43,7 @@ enum PlayerCommand {
     Pause,
     Stop,
     Seek(u32),
+    Update(Vec<SpotifyId>),
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +179,13 @@ impl Player {
 
     pub fn seek(&self, position_ms: u32) {
         self.command(PlayerCommand::Seek(position_ms));
+    }
+
+    pub fn update(&self, tracks: Vec<SpotifyId>) {
+        self.command(PlayerCommand::Update(tracks));
+//        for track in tracks {
+//            debug!("{:?}", track);
+//        }
     }
 }
 
@@ -505,6 +513,15 @@ impl PlayerInternal {
                 }
                 PlayerState::Invalid => panic!("invalid state"),
             },
+
+            PlayerCommand::Update(tracks) => {
+                for track_id in tracks {
+                    debug!("{:?}", track_id);
+//                    let track = Track::get(&self.session, track_id).wait().unwrap();
+//                    let artist = Artist::get(&self.session, track.artists.first().unwrap().to_owned()).wait().unwrap();
+//                    debug!("{:?}, {}, {}", track_id, track.name, artist.name);
+                }
+            }
         }
     }
 
@@ -612,6 +629,7 @@ impl ::std::fmt::Debug for PlayerCommand {
             PlayerCommand::Pause => f.debug_tuple("Pause").finish(),
             PlayerCommand::Stop => f.debug_tuple("Stop").finish(),
             PlayerCommand::Seek(position) => f.debug_tuple("Seek").field(&position).finish(),
+            PlayerCommand::Update(ref tracks) => f.debug_tuple("Update").field(tracks).finish(),
         }
     }
 }
