@@ -17,7 +17,7 @@ use gotham::pipeline::single_middleware;
 use gotham::router::{builder::*, Router};
 use gotham::state::{FromState, State};
 
-use metadata::{FileFormat, Metadata, Track, Artist};
+use metadata::{FileFormat, Metadata, Track, Album, Artist};
 use core::spotify_id::SpotifyId;
 
 use std::sync::{Arc, RwLock};
@@ -91,7 +91,17 @@ impl Serialize for SpotifyIdVecSer {
     }
 }
 
+trait New<X, Y> {
+    fn new(t: Y) -> X;
+}
+
 pub struct TrackSer(Track);
+
+impl New<TrackSer, Track> for TrackSer {
+    fn new(track: Track) -> TrackSer {
+        TrackSer(track)
+    }
+}
 
 impl Serialize for TrackSer {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -99,30 +109,77 @@ impl Serialize for TrackSer {
             S: Serializer,
     {
         let TrackSer(x) = self;
-        let mut state = serializer.serialize_struct("track", 4)?;
+        let mut state = serializer.serialize_struct("track", 7)?;
         state.serialize_field("id", &SpotifyIdSer(x.id))?;
         state.serialize_field("name", &x.name)?;
-        state.serialize_field("duration", &x.duration)?;
-//        let test = &x.artists.into_iter().map(|x| SpotifyIdSer(x)).collect::<Vec<SpotifyIdSer>>();
-//        state.serialize_field("artist", &SpotifyIdVecSer(x.artists))?;
         state.serialize_field("artist", &x.artists.iter().map(|x| SpotifyIdSer(*x)).collect::<Vec<SpotifyIdSer>>())?;
-//        state.serialize_field("g", &self.g)?;
-//        state.serialize_field("b", &self.b)?;
+        state.serialize_field("album", &SpotifyIdSer(x.album))?;
+        state.serialize_field("duration", &x.duration)?;
+        state.serialize_field("alternatives", &x.alternatives.iter().map(|x| SpotifyIdSer(*x)).collect::<Vec<SpotifyIdSer>>())?;
+        state.serialize_field("available", &x.available)?;
         state.end()
     }
 }
 
-fn get_product_handler(mut state: State) -> Box<HandlerFuture> {
+
+pub struct AlbumSer(Album);
+
+impl New<AlbumSer, Album> for AlbumSer {
+    fn new(album: Album) -> AlbumSer {
+        AlbumSer(album)
+    }
+}
+
+impl Serialize for AlbumSer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+    {
+        let AlbumSer(x) = self;
+        let mut state = serializer.serialize_struct("track", 4)?;
+        state.serialize_field("id", &SpotifyIdSer(x.id))?;
+        state.serialize_field("name", &x.name)?;
+        state.serialize_field("artist", &x.artists.iter().map(|x| SpotifyIdSer(*x)).collect::<Vec<SpotifyIdSer>>())?;
+        state.serialize_field("tracks", &x.tracks.iter().map(|x| SpotifyIdSer(*x)).collect::<Vec<SpotifyIdSer>>())?;
+//        state.serialize_field("covers", &x.artists.iter().map(|x| SpotifyIdSer(*x)).collect::<Vec<SpotifyIdSer>>())?;
+        state.end()
+    }
+}
+
+pub struct ArtistSer(Artist);
+
+impl New<ArtistSer, Artist> for ArtistSer {
+    fn new(artist: Artist) -> ArtistSer {
+        ArtistSer(artist)
+    }
+}
+
+
+impl Serialize for ArtistSer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+    {
+        let ArtistSer(x) = self;
+        let mut state = serializer.serialize_struct("track", 3)?;
+        state.serialize_field("id", &SpotifyIdSer(x.id))?;
+        state.serialize_field("name", &x.name)?;
+        state.serialize_field("top_tracks", &x.top_tracks.iter().map(|x| SpotifyIdSer(*x)).collect::<Vec<SpotifyIdSer>>())?;
+        state.end()
+    }
+}
+
+fn get_handler<X: Serialize + New<X,Y>, Y: Metadata>(mut state: State) -> Box<HandlerFuture> {
     let path = PathExtractor::take_from(&mut state);
     match SpotifyId::from_base62(&path.id) {
-        Ok(track_id) => {
+        Ok(spotifyid) => {
             let service_state = ServiceState::take_from(&mut state);
             let session = service_state.session.read().unwrap();
-            let metadata_request = Track::get(&session, track_id);
+            let metadata_request = Y::get(&session, spotifyid);
             Box::new(metadata_request.then(move |result| match result {
-                Ok(track) => {
-                    println!("track name {}", track.name);
-                    let res = create_response(&state, StatusCode::OK, mime::TEXT_PLAIN, serde_json::to_string(&TrackSer(track)).unwrap());
+                Ok(meta_response) => {
+//                        println!("track name {}", meta_response.name);
+                    let res = create_response(&state, StatusCode::OK, mime::TEXT_PLAIN, serde_json::to_string(&(X::new(meta_response))).unwrap());
                     Ok((state, res))
                 },
                 Err(E) => {
@@ -137,21 +194,6 @@ fn get_product_handler(mut state: State) -> Box<HandlerFuture> {
             Box::new(future::ok((state, resp)))
         }
     }
-
-//                Err(E) => json!({"error": "bad id",}),
-//                Ok(track_id) => {
-//                    match Track::get(self::session, track_id).wait() {
-//                        Err(E) => json!({"error": "not found",}),
-//                        Ok(track) => {
-//                            json!({
-//                              "track": id,
-//                              "name": track.name,
-//                              "session_id": state.session.session_id(),
-//                        })
-//                        }
-//                    }
-//                }
-//            }
 }
 
 fn router(service_state: ServiceState) -> Router {
@@ -169,7 +211,9 @@ fn router(service_state: ServiceState) -> Router {
 
     // build a router with the chain & pipeline
     build_router(chain, pipelines, |route| {
-        route.get("/track/:id").with_path_extractor::<PathExtractor>().to(get_product_handler);
+        route.get("/track/:id").with_path_extractor::<PathExtractor>().to(get_handler::<TrackSer, Track>);
+        route.get("/album/:id").with_path_extractor::<PathExtractor>().to(get_handler::<AlbumSer, Album>);
+        route.get("/artist/:id").with_path_extractor::<PathExtractor>().to(get_handler::<ArtistSer, Artist>);
     })
 //    build_simple_router(|route| {
 //        route
